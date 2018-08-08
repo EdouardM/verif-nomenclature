@@ -5,7 +5,7 @@ open FSharp.Data
 let [<Literal>] NomPath = "../data/Nomenclatures.csv"
 let [<Literal>] NomSchema =
     "Code produit(string), Version de la variante(string), Evolution(string), \
-    Libellé (string), Code Famille Logistique(int), Nature du produit(string), \
+    Libellé (string), Code Famille Logistique(int option), Nature du produit(string), \
     Quantité(int), Code Composant(string option),Version(string option), \
     Quantité composant(int option), Sous ensemble(string)"
 
@@ -58,7 +58,7 @@ open System.Text.RegularExpressions
 let [<Literal>] LibellePath = "../data/codes_vente_actifs_libelle_technique.csv"
 let [<Literal>] LibSchema = 
     "Code de la nature produit (string), Code niveau 4(string), \
-    Libellé niveau 4(string), Code de la famille logistique(int), Code du produit(string), \
+    Libellé niveau 4(string), Code de la famille logistique(int option), Code du produit(string), \
     Libelle technique(string)"
 
 
@@ -122,11 +122,11 @@ type CompareResults =
     }
 
 //Returns the missing components in libComponents for every code in nomComponents
-let compareComponents nomComponents=
+let compareComponents =
     nomComponents
-    |> Seq.choose (fun (code, compos) -> 
+    |> Seq.choose (fun (bomId, compos) -> 
         let missing = 
-            Map.tryFind code libComponents
+            Map.tryFind bomId.Code libComponents
             |> Option.map(fun libCompos-> 
                 //Compare the components in nomenclature and those in libelle
                 {
@@ -135,15 +135,15 @@ let compareComponents nomComponents=
                 } )
         match missing with
         | None -> None
-        | Some set -> Some (code, set)
+        | Some set -> Some (bomId, set)
         )
 
-let collectMissing (results: seq<string * CompareResults>) =
+let collectMissing (results: seq<BomIdentifier * CompareResults>) =
         Seq.collect (fun (code, result) -> 
             Set.map(fun c-> code, result.LibStatus.ToString(), c) result.MissingCompos ) results
 
-let formatMissing (missing: seq<string * string * string>) = 
-    Seq.map (fun (a, b, c) -> sprintf "%s;%s;%s" a b c) missing
+let formatMissing (missing: seq<BomIdentifier * string * string>) = 
+    Seq.map (fun (bomId, b, c) -> sprintf "%s;%s;%s;%s;%s" bomId.Code bomId.Version bomId.Evolution b c) missing
 
     
 open System.IO
@@ -157,7 +157,7 @@ let writeFile path (content: seq<string>)=
     |> Seq.iter wr.WriteLine
 
 
-compareComponents nomComponents
+compareComponents
 |> collectMissing
 |> formatMissing
 |> writeFile outputPath
