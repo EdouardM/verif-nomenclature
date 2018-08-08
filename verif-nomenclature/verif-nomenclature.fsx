@@ -34,9 +34,21 @@ let getComponentSet: seq<NomRow> -> Set<string> =
     >> Seq.toList
     >> removeOption
     >> Set.ofList
+
+type BomIdentifier = 
+    {
+        Code : string
+        Version : string
+        Evolution : string
+    }
+
 let getComponents (rows: seq<NomRow>) = 
     rows
-    |> Seq.groupBy codeProduit
+    |> Seq.groupBy (fun row -> 
+        {
+            Code = row.``Code produit``;
+            Version = row.``Version de la variante``
+            Evolution = row.Evolution} )
     |> Seq.map(fun (code, compos) -> code, getComponentSet compos)
 
 let nomComponents = getComponents nom.Rows
@@ -67,42 +79,72 @@ let getComponentsLib =
     >> extractCodes
     >> Set.ofList
 
+type LibStatus = 
+    | OK
+    | SansCodes
+    | Vide
+    override x.ToString() = 
+        match x with
+        | Vide -> "Vide"
+        | SansCodes -> "Sans code"
+        | OK -> "OK"
+
+type LibAnalysis = {
+    LibStatus : LibStatus
+    Compos : Set<string>
+}
+
 let getLibComponents (rows: seq<LibRow>) = 
     rows 
     |> Seq.map(fun row -> 
         let code = codeDuProduit row
-        let compos = getComponentsLib row
-        code , compos
+        let lib = libelletechnique row
+        if System.String.IsNullOrEmpty(lib) then
+            code, { LibStatus = Vide; Compos = Set.empty }
+        else 
+            let compos = getComponentsLib row
+            if compos.IsEmpty then
+                code, { LibStatus = SansCodes; Compos = Set.empty }
+            else
+                code, { LibStatus = OK; Compos = compos }
     )
 
 let libComponents = 
     getLibComponents lib.Rows
     |> Map.ofSeq
 
-libComponents.["10008"]
+libComponents.["10222"]
+
+type CompareResults =
+    {
+        LibStatus : LibStatus
+        MissingCompos : Set<string>
+    }
 
 //Returns the missing components in libComponents for every code in nomComponents
-let compareComponents libComponents nomComponents=
+let compareComponents nomComponents=
     nomComponents
     |> Seq.choose (fun (code, compos) -> 
         let missing = 
             Map.tryFind code libComponents
             |> Option.map(fun libCompos-> 
                 //Compare the components in nomenclature and those in libelle
-                Set.difference compos libCompos)
+                {
+                    LibStatus = libCompos.LibStatus;
+                    MissingCompos = Set.difference compos libCompos.Compos
+                } )
         match missing with
         | None -> None
         | Some set -> Some (code, set)
         )
 
-let collectMissing compos =
-    compos
-    |> Seq.collect(fun (code, missing) ->
-        Set.map(fun c-> code, c) missing  )
+let collectMissing (results: seq<string * CompareResults>) =
+        Seq.collect (fun (code, result) -> 
+            Set.map(fun c-> code, result.LibStatus.ToString(), c) result.MissingCompos ) results
 
-let formatMissing (missing: seq<string * string>) = 
-    Seq.map (fun (a, b) -> sprintf "%s;%s" a b) missing
-    
+let formatMissing (missing: seq<string * string * string>) = 
+    Seq.map (fun (a, b, c) -> sprintf "%s;%s;%s" a b c) missing
+
     
 open System.IO
 
@@ -115,7 +157,7 @@ let writeFile path (content: seq<string>)=
     |> Seq.iter wr.WriteLine
 
 
-compareComponents libComponents nomComponents
+compareComponents nomComponents
 |> collectMissing
 |> formatMissing
 |> writeFile outputPath
