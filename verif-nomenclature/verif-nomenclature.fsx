@@ -99,14 +99,14 @@ let getLibComponents (rows: seq<LibRow>) =
     |> Seq.map(fun row -> 
         let code = codeDuProduit row
         let lib = libelletechnique row
-        if System.String.IsNullOrEmpty(lib) then
-            code, { LibStatus = Vide; Compos = Set.empty }
+        
+        if System.String.IsNullOrEmpty(lib) 
+        then code, { LibStatus = Vide; Compos = Set.empty }
         else 
             let compos = getComponentsLib row
-            if compos.IsEmpty then
-                code, { LibStatus = SansCodes; Compos = Set.empty }
-            else
-                code, { LibStatus = OK; Compos = compos }
+            if compos.IsEmpty 
+            then code, { LibStatus = SansCodes; Compos = Set.empty }
+            else code, { LibStatus = OK; Compos = compos }
     )
 
 let libComponents = 
@@ -137,6 +137,31 @@ let compareComponents =
         | None -> None
         | Some set -> Some (bomId, set)
         )
+
+
+let distinctComponents = 
+    compareComponents
+    |> Seq.filter(fun (_, results) -> 
+        not results.MissingCompos.IsEmpty
+    )
+
+let sameComponents =
+    compareComponents
+    |> Seq.filter(fun (_, results) -> 
+        results.MissingCompos.IsEmpty
+    )
+
+nomComponents
+|> Seq.length
+
+compareComponents
+|> Seq.length
+
+distinctComponents
+|> Seq.length
+
+sameComponents
+|> Seq.length
 
 let collectMissing (results: seq<BomIdentifier * CompareResults>) =
         Seq.collect (fun (code, result) -> 
