@@ -1,46 +1,69 @@
-#r "../packages/FSharp.Data/lib/net45/FSharp.Data.dll"
+#load "./Bom.fsx"
+open Deedle
+#load "./DFBom.fsx"
+#load "./DFLibTech.fsx"
 
 open FSharp.Data
 
-let [<Literal>] NomPath = "../data/Nomenclatures.csv"
-let [<Literal>] NomSchema =
-    "Code produit(string), Version de la variante(string), Evolution(string), \
-    Libellé (string), Code Famille Logistique(int option), Nature du produit(string), \
-    Quantité(int), Code Composant(string option),Version(string option), \
-    Quantité composant(int option), Sous ensemble(string)"
+open Bom
+open DFBom
 
-type Nomenclature = CsvProvider<NomPath, ";", Schema = NomSchema>
-type NomRow = Nomenclature.Row
+open LibTech
+open DFLibTech
 
-let nom = Nomenclature.Load(NomPath)
+open System.Text.RegularExpressions
 
-let codeWithCompo: seq<NomRow> = 
-    query {
-        for row in nom.Rows do
-        where (row.``Code Composant`` <> None)
-        select row
+open Deedle
+
+type DF = Frame
+
+let dfBom = dfBom
+let dfLibTech = dfLibTech
+
+type BomId = 
+    {
+        CodeProduit : string
+        Variante : string
+        Evolution : string
     }
-
-let codeProduit (row: NomRow) = row.``Code produit``
-let codeComposant (row: NomRow) = row.``Code Composant``
-
 
 let consOption list opt = 
     Option.fold(fun acc value -> value::acc) list opt 
-let removeOption l = List.fold(fun acc x -> consOption acc x) [] l
+
+let removeOption l = 
+    List.fold(fun acc x -> consOption acc x) [] l
     
+let components (df: Frame<int, string>) = 
+    df.Columns
+    |> Series.get InfoComposants.codeComposant
+    |> Series.values
+    |> Seq.toList
+    |> removeOption
+    
+    // Frame.getCol InfoComposants.codeComposant df
+    // |> Series.mapValues removeOption
+    // |> Series.values
+    // |> Set.ofSeq
+// Series<BomId, Set<string list>> =
+let byBomId: Series<BomId, ObjectSeries<int>> =
+    dfBom
+    |> Frame.groupRowsUsing (fun _ c -> 
+        { 
+            CodeProduit = c.GetAs<string>(InfoProduit.codeProduit) 
+            Variante = c.GetAs<string>(InfoProduit.versionVariante)
+            Evolution = c.GetAs<string>(InfoProduit.evolution)
+        } )
+    |> Frame.nest        
+    |> Series.mapValues components
+
+byBomId.Get {CodeProduit = "10057"; Variante = "1"; Evolution = "1" }
+
 let getComponentSet: seq<NomRow> -> Set<string> =  
     Seq.map codeComposant
     >> Seq.toList
     >> removeOption
     >> Set.ofList
 
-type BomIdentifier = 
-    {
-        Code : string
-        Version : string
-        Evolution : string
-    }
 
 let getComponents (rows: seq<NomRow>) = 
     rows
@@ -53,20 +76,6 @@ let getComponents (rows: seq<NomRow>) =
 
 let nomComponents = getComponents nom.Rows
 
-open System.Text.RegularExpressions
-
-let [<Literal>] LibellePath = "../data/codes_vente_actifs_libelle_technique.csv"
-let [<Literal>] LibSchema = 
-    "Code de la nature produit (string), Code niveau 4(string), \
-    Libellé niveau 4(string), Code de la famille logistique(int option), Code du produit(string), \
-    Libelle technique(string)"
-
-
-type Libelle = CsvProvider<LibellePath, ";", Schema = LibSchema>
-type LibRow = Libelle.Row
-
-let codeDuProduit (row: LibRow) = row.``Code du produit``
-let libelletechnique (row: LibRow) = row.``Libelle technique``
 
 let lib = Libelle.Load(LibellePath)
 let extractCodes libelle = 
