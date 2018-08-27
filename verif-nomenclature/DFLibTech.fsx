@@ -22,12 +22,12 @@ module LibTechData =
 
     let toObs (row: BomRow) = 
         {
-            CodeProduit = row.``Code Produit``
+            CodeProduit = row.CodeProduit
             Nature = row.Nature
             Niveau4 = row.Niveau4
             LibNiveau4 = row.LibelleNiveau4
-            CodeFamilleLog = row.``Code Famille Logistique``
-            LibTech = row.``Libellé technique``
+            CodeFamilleLog = row.CodeFamilleLog
+            LibTech = row.LibTech
         }
 
     let obs = csvBomCV.Rows |> Seq.map toObs

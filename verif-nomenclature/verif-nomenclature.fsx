@@ -1,5 +1,4 @@
 #load "./Bom.fsx"
-open Deedle
 #load "./DFBom.fsx"
 #load "./DFLibTech.fsx"
 
@@ -14,8 +13,6 @@ open DFLibTech
 open System.Text.RegularExpressions
 
 open Deedle
-
-type DF = Frame
 
 let dfBom = dfBom
 let dfLibTech = dfLibTech
@@ -34,18 +31,13 @@ let removeOption l =
     List.fold(fun acc x -> consOption acc x) [] l
     
 let components (df: Frame<int, string>) = 
-    df.Columns
-    |> Series.get InfoComposants.codeComposant
+    Frame.getCol InfoComposants.codeComposant df
     |> Series.values
     |> Seq.toList
     |> removeOption
+    |> Set.ofList
     
-    // Frame.getCol InfoComposants.codeComposant df
-    // |> Series.mapValues removeOption
-    // |> Series.values
-    // |> Set.ofSeq
-// Series<BomId, Set<string list>> =
-let byBomId: Series<BomId, ObjectSeries<int>> =
+let byBomId: Series<BomId, Frame<int, string>> =
     dfBom
     |> Frame.groupRowsUsing (fun _ c -> 
         { 
@@ -54,144 +46,144 @@ let byBomId: Series<BomId, ObjectSeries<int>> =
             Evolution = c.GetAs<string>(InfoProduit.evolution)
         } )
     |> Frame.nest        
-    |> Series.mapValues components
 
-byBomId.Get {CodeProduit = "10057"; Variante = "1"; Evolution = "1" }
+let nomComponents: Series<BomId, Set<string>> = 
+    Series.mapValues components byBomId
 
-let getComponentSet: seq<NomRow> -> Set<string> =  
-    Seq.map codeComposant
-    >> Seq.toList
-    >> removeOption
-    >> Set.ofList
-
-
-let getComponents (rows: seq<NomRow>) = 
-    rows
-    |> Seq.groupBy (fun row -> 
-        {
-            Code = row.``Code produit``;
-            Version = row.``Version de la variante``
-            Evolution = row.Evolution} )
-    |> Seq.map(fun (code, compos) -> code, getComponentSet compos)
-
-let nomComponents = getComponents nom.Rows
-
-
-let lib = Libelle.Load(LibellePath)
 let extractCodes libelle = 
     let pattern = @"([0-9]{5}[0-9]{0,1})"  
     let ms = Regex.Matches(libelle,pattern)
     [ for m in ms -> m.Value ]
-
-let getComponentsLib = 
-    libelletechnique 
-    >> extractCodes
-    >> Set.ofList
+    |> Set.ofList
 
 type LibStatus = 
-    | OK
-    | SansCodes
-    | Vide
+    | WithCodes
+    | WithoutCodes
+    | Empty
     override x.ToString() = 
         match x with
-        | Vide -> "Vide"
-        | SansCodes -> "Sans code"
-        | OK -> "OK"
+        | Empty -> "Vide"
+        | WithoutCodes -> "Sans code"
+        | WithCodes -> "Avec code"
 
 type LibAnalysis = {
     LibStatus : LibStatus
     Compos : Set<string>
 }
 
-let getLibComponents (rows: seq<LibRow>) = 
-    rows 
-    |> Seq.map(fun row -> 
-        let code = codeDuProduit row
-        let lib = libelletechnique row
-        
+let libComponents: Series<string, LibAnalysis> = 
+    dfLibTech
+    |> Frame.indexRows LibTech.codeProduit
+    |> Frame.getCol LibTech.libTech
+    |> Series.mapValues(fun lib -> 
         if System.String.IsNullOrEmpty(lib) 
-        then code, { LibStatus = Vide; Compos = Set.empty }
+        then { LibStatus = Empty; Compos = Set.empty }
         else 
-            let compos = getComponentsLib row
+            let compos = extractCodes lib
             if compos.IsEmpty 
-            then code, { LibStatus = SansCodes; Compos = Set.empty }
-            else code, { LibStatus = OK; Compos = compos }
+            then { LibStatus = WithoutCodes; Compos = Set.empty }
+            else { LibStatus = WithCodes; Compos = compos }
     )
 
-let libComponents = 
-    getLibComponents lib.Rows
-    |> Map.ofSeq
+libComponents.["24358"]
 
-libComponents.["10222"]
-
-type CompareResults =
+type DiffInfo =
     {
         LibStatus : LibStatus
         MissingCompos : Set<string>
     }
+type ProdCompareResult = 
+    | LibNotFound
+    | LibOK
+    | Diff of DiffInfo
+    override x.ToString() =
+        match x with
+        | LibNotFound -> "Libelle non trouvé"
+        | LibOk -> "Libelle OK"
+        | Diff _ -> "Manque Composant"
 
 //Returns the missing components in libComponents for every code in nomComponents
 let compareComponents =
     nomComponents
-    |> Seq.choose (fun (bomId, compos) -> 
+    |> Series.map(fun bomId compos -> 
         let missing = 
-            Map.tryFind bomId.Code libComponents
+            Series.tryGet bomId.CodeProduit libComponents
             |> Option.map(fun libCompos-> 
-                //Compare the components in nomenclature and those in libelle
-                {
-                    LibStatus = libCompos.LibStatus;
-                    MissingCompos = Set.difference compos libCompos.Compos
-                } )
+            //Compare the components in nomenclature and those in libelle
+            {
+                LibStatus = libCompos.LibStatus;
+                MissingCompos = Set.difference compos libCompos.Compos
+            } )
         match missing with
-        | None -> None
-        | Some set -> Some (bomId, set)
-        )
-
-
+        | None -> LibNotFound
+        | Some diffInfo -> 
+            if diffInfo.MissingCompos.IsEmpty
+            then LibOK
+            else Diff diffInfo
+    )
+    
 let distinctComponents = 
     compareComponents
-    |> Seq.filter(fun (_, results) -> 
-        not results.MissingCompos.IsEmpty
-    )
+    |> Series.filterValues( function | Diff _ -> true | _ -> false)    
 
 let sameComponents =
     compareComponents
-    |> Seq.filter(fun (_, results) -> 
-        results.MissingCompos.IsEmpty
-    )
+    |> Series.filterValues( function | LibOK -> true | _ -> false)
 
-nomComponents
-|> Seq.length
+let libNotFound = 
+    compareComponents
+    |> Series.filterValues( function | LibNotFound -> true | _ -> false)
 
 compareComponents
-|> Seq.length
+|> Series.countKeys
 
 distinctComponents
-|> Seq.length
+|> Series.countKeys
 
 sameComponents
-|> Seq.length
+|> Series.countKeys
 
-let collectMissing (results: seq<BomIdentifier * CompareResults>) =
-        Seq.collect (fun (code, result) -> 
-            Set.map(fun c-> code, result.LibStatus.ToString(), c) result.MissingCompos ) results
+libNotFound
+|> Series.countKeys
 
-let formatMissing (missing: seq<BomIdentifier * string * string>) = 
-    Seq.map (fun (bomId, b, c) -> sprintf "%s;%s;%s;%s;%s" bomId.Code bomId.Version bomId.Evolution b c) missing
-
-    
-open System.IO
-
+type CompareOutput = {
+    CodeProduit:string
+    Version: string
+    Evolution: string
+    StatutLibelle: string
+    Ecart : string
+    CodeComposant : string
+}
+let dfCompareResults =
+        compareComponents
+        |> Series.observations
+        |> Seq.collect(fun (bomId, result) -> 
+            match result with
+            | Diff diffInfo -> 
+                diffInfo.MissingCompos
+                |> Set.map(fun compo -> 
+                    {
+                        CodeProduit = bomId.CodeProduit
+                        Version = bomId.Variante
+                        Evolution = bomId.Evolution
+                        Ecart = "Compo manquant"
+                        StatutLibelle = diffInfo.LibStatus.ToString()
+                        CodeComposant = compo
+                    } )
+                |> Set.toList                                
+            | res ->
+                [ {
+                        CodeProduit = bomId.CodeProduit
+                        Version = bomId.Variante
+                        Evolution = bomId.Evolution
+                        Ecart = res.ToString()
+                        StatutLibelle = ""
+                        CodeComposant = ""
+                } ]          
+        )
+        |> Seq.mapi (fun i v -> i, v)
+        |> series
+        |> Frame.ofRecords
 let outputPath = __SOURCE_DIRECTORY__ + "../../data/output.csv"
 
-let writeFile path (content: seq<string>)= 
-    use wr = new StreamWriter(path, true)
-    
-    content
-    |> Seq.iter wr.WriteLine
-
-
-compareComponents
-|> collectMissing
-|> formatMissing
-|> writeFile outputPath
+dfCompareResults.SaveCsv(path=outputPath, separator=';')

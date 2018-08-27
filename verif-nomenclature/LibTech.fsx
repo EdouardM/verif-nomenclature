@@ -14,9 +14,9 @@ module LibTech =
     let [<Literal>] nature = "Nature"
     let [<Literal>] niveau4 = "Niveau4"
     let [<Literal>] libNiveau4 = "LibelleNiveau4"
-    let [<Literal>] codeFamilleLog = "Code Famille Logistique"
-    let [<Literal>] codeProduit = "Code Produit"
-    let [<Literal>] libTech = "Libellé technique"
+    let [<Literal>] codeFamilleLog = "CodeFamilleLog"
+    let [<Literal>] codeProduit = "CodeProduit"
+    let [<Literal>] libTech = "LibTech"
 
     open ColTypes
 
